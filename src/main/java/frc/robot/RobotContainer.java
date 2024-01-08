@@ -6,13 +6,26 @@ package frc.robot;
 
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
+import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
+import frc.robot.subsystems.SimpleFlyWheel;
 
 public class RobotContainer {
+  // Gamepads
+  private final CommandXboxController m_controller = new CommandXboxController(0);
+
+  // Subsystems
+  private final SimpleFlyWheel m_simpleFlyWheel = new SimpleFlyWheel();
+
   public RobotContainer() {
     configureBindings();
   }
 
-  private void configureBindings() {}
+  private void configureBindings() {
+    // Setup button to command bindings
+
+    // While the B button is held down, then run the spin command
+    m_controller.a().whileTrue(m_simpleFlyWheel.spinCommand());
+  }
 
   public Command getAutonomousCommand() {
     return Commands.print("No autonomous command configured");
