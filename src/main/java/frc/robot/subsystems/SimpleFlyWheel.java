@@ -70,18 +70,18 @@ public class SimpleFlyWheel extends SubsystemBase {
     }
 
 
-    public void setPercentOutput(double percentOutput) {
-        m_leader.set(percentOutput);
+    public void setOutputVoltage(double outputVoltage) {
+        m_leader.setVoltage(outputVoltage);
     }
 
     public void stop() {
         m_leader.stopMotor();
     }
 
-    public Command spinCommand() {
+    public Command spinCommand(double outputVoltage) {
         return Commands.runEnd(
             // While this command is running set the flywheel to spin at 50% power
-            ()-> this.setPercentOutput(0.5), 
+            ()-> this.setOutputVoltage(outputVoltage), 
 
             // Stop the flywheel motor, when the command ends (button is no longer pressed, or some other comamnd wants this subsystem)
             this::stop,

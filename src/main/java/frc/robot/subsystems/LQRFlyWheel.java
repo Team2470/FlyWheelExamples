@@ -1,9 +1,13 @@
 package frc.robot.subsystems;
 
-import com.revrobotics.CANSparkMax;
-import com.revrobotics.RelativeEncoder;
+import static edu.wpi.first.units.Units.RPM;
+import static edu.wpi.first.units.Units.Rotations;
+import static edu.wpi.first.units.Units.Volts;
+
 import com.revrobotics.CANSparkLowLevel.MotorType;
 import com.revrobotics.CANSparkLowLevel.PeriodicFrame;
+import com.revrobotics.CANSparkMax;
+import com.revrobotics.RelativeEncoder;
 
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.Nat;
@@ -16,11 +20,18 @@ import edu.wpi.first.math.system.LinearSystem;
 import edu.wpi.first.math.system.LinearSystemLoop;
 import edu.wpi.first.math.system.plant.LinearSystemId;
 import edu.wpi.first.math.util.Units;
+import edu.wpi.first.units.Angle;
+import edu.wpi.first.units.Measure;
+import edu.wpi.first.units.MutableMeasure;
+import edu.wpi.first.units.Velocity;
+import edu.wpi.first.units.Voltage;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
+import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.robot.Constants.FlyWheelConstants;
+
 
 public class LQRFlyWheel extends SubsystemBase {
     public enum Mode {
@@ -79,6 +90,33 @@ public class LQRFlyWheel extends SubsystemBase {
     // The state-space loop combines a controller, observer, feedforward and plant for easy control.
     private final LinearSystemLoop<N1, N1, N1> m_loop =
         new LinearSystemLoop<>(m_flywheelPlant, m_controller, m_observer, 10.0, 0.020);
+
+    // Create a new SysId routine for characterizing the flywheel.
+    // This will be what will populate FlyWheelConstants.kFlywheelKv and FlyWheelConstants.kFlywheelKa with values
+    private MutableMeasure<Voltage> m_sysIDOutputVolts = MutableMeasure.mutable(Volts.of(0));
+    private MutableMeasure<Angle> m_sysIDRotations = MutableMeasure.mutable(Rotations.of(0));
+    private MutableMeasure<Velocity<Angle>> m_sysIDVelocity = MutableMeasure.mutable(RPM.of(0)); 
+    private final SysIdRoutine m_sysIDRoutine = new SysIdRoutine(
+        // Empty config defaults to 1 volt/second ramp rate and 7 volt step voltage.
+        new SysIdRoutine.Config(),
+        new SysIdRoutine.Mechanism(
+            // Tell SysId how to plumb the driving voltage to the motors.
+            (Measure<Voltage> volts) -> {},//this.setOpenLoop(volts.in(Volts)),
+            // Tell SysId how to record a frame of data for each motor on the mechanism being
+            // characterized.
+            log -> {
+                // Record a fram for the flywheel motor
+                log.motor("flywheel")
+                    .voltage(m_sysIDOutputVolts)
+                    .angularPosition(m_sysIDRotations)
+                    .angularVelocity(m_sysIDVelocity);
+            },
+            // Tell SysId to make generated commands require this subsystem, suffix test state in
+            // WPILog with this subsystem's name ("drive"),
+            this
+        )
+    );
+
 
     public LQRFlyWheel() {
         // Create the leader motor
@@ -181,8 +219,7 @@ public class LQRFlyWheel extends SubsystemBase {
             // Open loop control
             //
 
-            // Convert prevent output to voltages
-            outputVoltage = m_demand*12.0;
+            outputVoltage = m_demand;
             break;
         case kClosedLoopPID:
             //
@@ -246,7 +283,11 @@ public class LQRFlyWheel extends SubsystemBase {
         SmartDashboard.putNumber("FlyWheel Velocity", getVelocity());
         SmartDashboard.putNumber("FlyWheel Goal Velocity", m_demand);
         SmartDashboard.putNumber("FlyWheel Error", getErrorRPM());
-        SmartDashboard.putNumber("FlyWheel Error Precentage", getErrorPrecent());   
+        SmartDashboard.putNumber("FlyWheel Error Precentage", getErrorPrecent());
+        
+        // Save it off for SysID
+        m_sysIDOutputVolts.mut_replace(outputVoltage, Volts);
+        m_sysIDRotations.mut_replace(m_encoder.getPosition(), Rotations);
     }
 
     public void stop() {
@@ -254,15 +295,15 @@ public class LQRFlyWheel extends SubsystemBase {
         m_demand  = 0.0;
     }
 
-    public void setOpenLoop(double precentOutput) {
+    public void setOpenLoop(double voltage) {
         m_mode = Mode.kOpenLoop;
-        m_demand = precentOutput;
+        m_demand = voltage;
     }
 
-    public Command setOpenLoopCommand(double precentOutput) {
+    public Command setOpenLoopCommand(double voltage) {
         return Commands.runEnd(
-            // While this command is running set the flywheel to spin at the given output precent 
-            ()-> this.setOpenLoop(precentOutput), 
+            // While this command is running set the flywheel to spin at the given output voltage 
+            ()-> this.setOpenLoop(voltage), 
 
             // Stop the flywheel motor, when the command ends (button is no longer pressed, or some other comamnd wants this subsystem)
             this::stop,
@@ -307,5 +348,13 @@ public class LQRFlyWheel extends SubsystemBase {
             this
         );
     }
+
+    public Command sysIdQuasistatic(SysIdRoutine.Direction direction) {
+        return m_sysIDRoutine.quasistatic(direction);
+      }
+    
+      public Command sysIdDynamic(SysIdRoutine.Direction direction) {
+        return m_sysIDRoutine.dynamic(direction);
+      }
 
 }

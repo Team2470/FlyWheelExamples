@@ -33,7 +33,7 @@ public class PIDFlyWheel extends SubsystemBase {
     //
     private Mode m_mode = Mode.kStopped;
     private double m_demand = 0.0;
-    private final PIDController m_controller = new PIDController(0, 0, 0);
+    private final PIDController m_pidController = new PIDController(0, 0, 0);
 
     public PIDFlyWheel() {
         // Create the leader motor
@@ -85,7 +85,7 @@ public class PIDFlyWheel extends SubsystemBase {
             // getPositionError represents the delta/difference from the setpoint/goal velocity to current velocity
             // The naming of getPositionError is kind of misleading for this usecase, as we aren't using the PID controller
             // for position, but instead velocoty. There is a function called getVelocityError which will return how fast (or the rate :) ) the error is ranging
-            return m_controller.getPositionError();
+            return m_pidController.getPositionError();
         }
 
         return 0;
@@ -123,8 +123,7 @@ public class PIDFlyWheel extends SubsystemBase {
             // Open loop control
             //
 
-            // Convert prevent output to voltages
-            outputVoltage = m_demand*12.0;
+            outputVoltage = m_demand;
             break;
         case kClosedLoopPID:
             //
@@ -135,7 +134,7 @@ public class PIDFlyWheel extends SubsystemBase {
             outputVoltage = m_demand * FlyWheelConstants.kF; 
 
             // Update the PID controller, and its output to the feedforward voltage 
-            outputVoltage += m_controller.calculate(getVelocity());
+            outputVoltage += m_pidController.calculate(getVelocity());
 
             // Clamp output voltage to -10 to 10 volts
             outputVoltage = MathUtil.clamp(outputVoltage, -10, 10);
@@ -146,6 +145,7 @@ public class PIDFlyWheel extends SubsystemBase {
             break;
         case kStopped:
         default:
+            // If we are stopped, or don't know what mode we are in stop the motor. 
             outputVoltage = 0.0;
         }
 
@@ -170,15 +170,15 @@ public class PIDFlyWheel extends SubsystemBase {
         m_demand  = 0.0;
     }
 
-    public void setOpenLoop(double precentOutput) {
+    public void setOpenLoop(double voltage) {
         m_mode = Mode.kOpenLoop;
-        m_demand = precentOutput;
+        m_demand = voltage;
     }
 
-    public Command setOpenLoopCommand(double precentOutput) {
+    public Command setOpenLoopCommand(double voltage) {
         return Commands.runEnd(
-            // While this command is running set the flywheel to spin at the given output precent 
-            ()-> this.setOpenLoop(precentOutput), 
+            // While this command is running set the flywheel to spin at the given output voltage 
+            ()-> this.setOpenLoop(voltage), 
 
             // Stop the flywheel motor, when the command ends (button is no longer pressed, or some other comamnd wants this subsystem)
             this::stop,
