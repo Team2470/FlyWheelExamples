@@ -4,6 +4,7 @@
 * https://docs.wpilib.org/en/stable/docs/software/advanced-controls/introduction/tuning-flywheel.html
 * PID
     * https://docs.wpilib.org/en/stable/docs/software/advanced-controls/controllers/pidcontroller.html
+    * https://docs.wpilib.org/en/stable/docs/software/advanced-controls/controllers/feedforward.html
     * https://docs.wpilib.org/en/stable/docs/software/advanced-controls/controllers/combining-feedforward-feedback.html
 
     * Videos:

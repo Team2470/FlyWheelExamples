@@ -97,7 +97,7 @@ public class PIDFlyWheel extends SubsystemBase {
             //
 
             // Calculate feedforward output voltage
-            double outputVoltage = 0; 
+            double outputVoltage = m_demand * FlyWheelConstants.kF; 
 
             // Update the PID controller, and its output to the feedforward voltage 
             outputVoltage += m_controller.calculate(getVelocity());
