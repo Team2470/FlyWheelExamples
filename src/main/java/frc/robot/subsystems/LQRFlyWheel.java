@@ -5,19 +5,26 @@ import com.revrobotics.RelativeEncoder;
 import com.revrobotics.CANSparkLowLevel.MotorType;
 import com.revrobotics.CANSparkLowLevel.PeriodicFrame;
 
-import edu.wpi.first.math.MathUtil;
-import edu.wpi.first.math.controller.PIDController;
+import edu.wpi.first.math.Nat;
+import edu.wpi.first.math.VecBuilder;
+import edu.wpi.first.math.controller.LinearQuadraticRegulator;
+import edu.wpi.first.math.estimator.KalmanFilter;
+import edu.wpi.first.math.numbers.N1;
+import edu.wpi.first.math.system.LinearSystem;
+import edu.wpi.first.math.system.LinearSystemLoop;
+import edu.wpi.first.math.system.plant.LinearSystemId;
+import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.FlyWheelConstants;
 
-public class PIDFlyWheel extends SubsystemBase {
+public class LQRFlyWheel extends SubsystemBase {
     public enum Mode {
         kStopped,
         kOpenLoop,
-        kClosedLoopPID
+        kClosedLoopLQR
     }
 
     //
@@ -33,9 +40,41 @@ public class PIDFlyWheel extends SubsystemBase {
     //
     private Mode m_mode = Mode.kStopped;
     private double m_demand = 0.0;
-    private final PIDController m_controller = new PIDController(0, 0, 0);
 
-    public PIDFlyWheel() {
+    // The plant holds a state-space model of our flywheel. This system has the following properties:
+    //
+    // States: [velocity], in radians per second.
+    // Inputs (what we can "put in"): [voltage], in volts.
+    // Outputs (what we can measure): [velocity], in radians per second.
+    //
+    // The Kv and Ka constants are found using the FRC Characterization toolsuite.
+    private final LinearSystem<N1, N1, N1> m_flywheelPlant =
+        LinearSystemId.identifyVelocitySystem(FlyWheelConstants.kFlywheelKv, FlyWheelConstants.kFlywheelKa);
+
+    // The observer fuses our encoder data and voltage inputs to reject noise.
+    private final KalmanFilter<N1, N1, N1> m_observer =
+        new KalmanFilter<>(
+            Nat.N1(),
+            Nat.N1(),
+            m_flywheelPlant,
+            VecBuilder.fill(3.0), // How accurate we think our model is
+            VecBuilder.fill(0.01), // How accurate we think our encoder
+            // data is
+            0.020);
+
+    // A LQR uses feedback to create voltage commands.
+    private final LinearQuadraticRegulator<N1, N1, N1> m_controller =
+        new LinearQuadraticRegulator<>(
+            m_flywheelPlant,
+            VecBuilder.fill(8.0), // Velocity error tolerance
+            VecBuilder.fill(12.0), // Control effort (voltage) tolerance
+            0.020);
+
+    // The state-space loop combines a controller, observer, feedforward and plant for easy control.
+    private final LinearSystemLoop<N1, N1, N1> m_loop =
+        new LinearSystemLoop<>(m_flywheelPlant, m_controller, m_observer, 10.0, 0.020);
+
+    public LQRFlyWheel() {
         // Create the leader motor
         m_leader = new CANSparkMax(FlyWheelConstants.kLeaderID, MotorType.kBrushless);
 
@@ -65,6 +104,10 @@ public class PIDFlyWheel extends SubsystemBase {
 
         // Retrieve the built in motor encoder from the leader
         m_encoder = m_leader.getEncoder();
+
+        // Compenstate for sensor reading latency. Try this code without it first!
+        // For more info see: https://docs.wpilib.org/en/stable/docs/software/advanced-controls/state-space/state-space-intro.html#lqr-and-measurement-latency-compensation
+        // m_controller.latencyCompensate(m_flywheelPlant, 0.02, 0.025);
     }
 
     /**
@@ -81,11 +124,8 @@ public class PIDFlyWheel extends SubsystemBase {
      * @return closed cloosed error in RPM
      */
     public double getErrorRPM() {
-        if (m_mode == Mode.kClosedLoopPID) {
-            // getPositionError represents the delta/difference from the setpoint/goal velocity to current velocity
-            // The naming of getPositionError is kind of misleading for this usecase, as we aren't using the PID controller
-            // for position, but instead velocoty. There is a function called getVelocityError which will return how fast (or the rate :) ) the error is ranging
-            return m_controller.getPositionError();
+        if (m_mode == Mode.kClosedLoopLQR) {
+            return m_demand - m_encoder.getVelocity();
         }
 
         return 0;
@@ -101,7 +141,7 @@ public class PIDFlyWheel extends SubsystemBase {
      * @return precent error. A value of 10 means 10%
      */
     public double getErrorPrecent(){
-        if (m_mode == Mode.kClosedLoopPID) {
+        if (m_mode == Mode.kClosedLoopLQR) {
             return (m_demand - m_encoder.getVelocity() / m_demand) * 100;
         }
 
@@ -110,13 +150,20 @@ public class PIDFlyWheel extends SubsystemBase {
     
 
     /**
+     * When the robot enters auto or teleop reset the loop with the current encoder velocity
+     */
+    public void init() {
+        m_loop.reset(VecBuilder.fill(Units.rotationsPerMinuteToRadiansPerSecond(m_encoder.getVelocity())));
+    }
+
+    /**
      * Periodic will run every 20ms reguardless if the robot is enabled/disabled.
      * This is a good place to put control logic for the system, and publish diagnostic info.
      */
     @Override
     public void periodic() {
         double outputVoltage = 0.0;
-
+       
         switch (m_mode) {
         case kOpenLoop:
             //
@@ -126,22 +173,29 @@ public class PIDFlyWheel extends SubsystemBase {
             // Convert prevent output to voltages
             outputVoltage = m_demand*12.0;
             break;
-        case kClosedLoopPID:
+        case kClosedLoopLQR:
             //
-            // PID Control
+            // LQR StateSpace Control
             //
 
-            // Calculate feedforward output voltage
-            outputVoltage = m_demand * FlyWheelConstants.kF; 
+            // Set the next refence to our goal velocity
+            // The LQR controller works in Radians/Second, not RPM so conversion is needed
+            double goalRadS = Units.rotationsPerMinuteToRadiansPerSecond(m_demand);
+            m_loop.setNextR(VecBuilder.fill(goalRadS));
 
-            // Update the PID controller, and its output to the feedforward voltage 
-            outputVoltage += m_controller.calculate(getVelocity());
+            // Correct our Kalman filter's state vector estimate with encoder data.
+            double currentVelocity = Units.rotationsPerMinuteToRadiansPerSecond(getVelocity());
+            m_loop.correct(VecBuilder.fill(currentVelocity));
 
-            // Clamp output voltage to -10 to 10 volts
-            outputVoltage = MathUtil.clamp(outputVoltage, -10, 10);
+            // Update our LQR to generate new voltage commands and use the voltages to predict the next
+            // state with out Kalman filter.
+            m_loop.predict(0.020);
 
-            // Send the command to the motor
-            m_leader.setVoltage(outputVoltage);
+            // Send the new calculated voltage to the motors.
+            // voltage = duty cycle * battery voltage, so
+            // duty cycle = voltage / battery voltage
+            outputVoltage = m_loop.getU(0);
+
 
             break;
         case kStopped:
@@ -162,7 +216,7 @@ public class PIDFlyWheel extends SubsystemBase {
         SmartDashboard.putNumber("FlyWheel Velocity", getVelocity());
         SmartDashboard.putNumber("FlyWheel Goal Velocity", m_demand);
         SmartDashboard.putNumber("FlyWheel Error", getErrorRPM());
-        SmartDashboard.putNumber("FlyWheel Error Precentage", getErrorPrecent());  
+        SmartDashboard.putNumber("FlyWheel Error Precentage", getErrorPrecent());   
     }
 
     public void stop() {
@@ -188,15 +242,15 @@ public class PIDFlyWheel extends SubsystemBase {
         );
     }
 
-    public void setClosedLoopPID(double goalRPM) {
-        m_mode = Mode.kClosedLoopPID;
+    public void setClosedLoop(double goalRPM) {
+        m_mode = Mode.kClosedLoopLQR;
         m_demand = goalRPM;
     }
 
-    public Command setClosedLoopPIDCommand(double goalRPM) {
+    public Command setClosedLoopCommand(double goalRPM) {
         return Commands.runEnd(
             // While this command is running set the flywheel to spin at the given goal RPm 
-            ()-> this.setClosedLoopPID(goalRPM), 
+            ()-> this.setClosedLoop(goalRPM), 
 
             // Stop the flywheel motor, when the command ends (button is no longer pressed, or some other comamnd wants this subsystem)
             this::stop,
