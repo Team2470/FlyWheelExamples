@@ -7,6 +7,7 @@ package frc.robot;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
+import frc.robot.subsystems.PIDFlyWheel;
 import frc.robot.subsystems.SimpleFlyWheel;
 
 public class RobotContainer {
@@ -14,7 +15,9 @@ public class RobotContainer {
   private final CommandXboxController m_controller = new CommandXboxController(0);
 
   // Subsystems
+  // TODO for this code to run, only one of the flywheel subsystems and commands needs to be uncommented out.
   private final SimpleFlyWheel m_simpleFlyWheel = new SimpleFlyWheel();
+  private final PIDFlyWheel m_pidFlywheel = new PIDFlyWheel();
 
   public RobotContainer() {
     configureBindings();
@@ -23,8 +26,34 @@ public class RobotContainer {
   private void configureBindings() {
     // Setup button to command bindings
 
+    //
+    // Simple FlyWheel
+    //
+
     // While the B button is held down, then run the spin command
     m_controller.a().whileTrue(m_simpleFlyWheel.spinCommand());
+
+
+    //
+    // PID FlyWheel
+    //
+
+    // While the start button is held down, then spin the fly wheel at 0.1 (10%) output
+    // Useful to checkout the flywheel
+    m_controller.a().whileTrue(m_pidFlywheel.setOpenLoopCommand(0.1));
+
+    // While the A button is held down, then spin the fly wheel at 500 RPM
+    m_controller.a().whileTrue(m_pidFlywheel.setClosedLoopCommand(500));
+
+    // While the B button is held down, then spin the fly wheel at 1000 RPM
+    m_controller.a().whileTrue(m_pidFlywheel.setClosedLoopCommand(1000));
+
+    // While the X button is held down, then spin the fly wheel at 1500 RPM
+    m_controller.a().whileTrue(m_pidFlywheel.setClosedLoopCommand(1500));
+
+    // While the Y button is held down, then spin the fly wheel at 2000 RPM
+    m_controller.a().whileTrue(m_pidFlywheel.setClosedLoopCommand(2000));
+
   }
 
   public Command getAutonomousCommand() {
