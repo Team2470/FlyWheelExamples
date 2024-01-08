@@ -56,6 +56,26 @@ public class RobotContainer {
     // While the Y button is held down, then spin the fly wheel at 2000 RPM
     m_controller.a().whileTrue(m_pidFlywheel.setClosedLoopPIDCommand(2000));
 
+    //
+    // LQR FlyWheel
+    //
+
+    // While the start button is held down, then spin the fly wheel at 0.1 (10%) output
+    // Useful to checkout the flywheel
+    m_controller.a().whileTrue(m_lqrFlywheel.setOpenLoopCommand(0.1));
+
+    // While the A button is held down, then spin the fly wheel at 500 RPM
+    m_controller.a().whileTrue(m_lqrFlywheel.setClosedLoopLQRCommand(500));
+
+    // While the B button is held down, then spin the fly wheel at 1000 RPM
+    m_controller.a().whileTrue(m_lqrFlywheel.setClosedLoopLQRCommand(1000));
+
+    // While the X button is held down, then spin the fly wheel at 1500 RPM
+    m_controller.a().whileTrue(m_lqrFlywheel.setClosedLoopLQRCommand(1500));
+
+    // While the Y button is held down, then spin the fly wheel at 2000 RPM
+    m_controller.a().whileTrue(m_lqrFlywheel.setClosedLoopLQRCommand(2000));
+
   }
 
   public Command getAutonomousCommand() {

@@ -5,9 +5,11 @@ import com.revrobotics.RelativeEncoder;
 import com.revrobotics.CANSparkLowLevel.MotorType;
 import com.revrobotics.CANSparkLowLevel.PeriodicFrame;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.Nat;
 import edu.wpi.first.math.VecBuilder;
 import edu.wpi.first.math.controller.LinearQuadraticRegulator;
+import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.math.estimator.KalmanFilter;
 import edu.wpi.first.math.numbers.N1;
 import edu.wpi.first.math.system.LinearSystem;
@@ -24,6 +26,7 @@ public class LQRFlyWheel extends SubsystemBase {
     public enum Mode {
         kStopped,
         kOpenLoop,
+        kClosedLoopPID,
         kClosedLoopLQR
     }
 
@@ -40,6 +43,9 @@ public class LQRFlyWheel extends SubsystemBase {
     //
     private Mode m_mode = Mode.kStopped;
     private double m_demand = 0.0;
+
+    private final PIDController m_pidController = new PIDController(0, 0, 0);
+
 
     // The plant holds a state-space model of our flywheel. This system has the following properties:
     //
@@ -124,7 +130,12 @@ public class LQRFlyWheel extends SubsystemBase {
      * @return closed cloosed error in RPM
      */
     public double getErrorRPM() {
-        if (m_mode == Mode.kClosedLoopLQR) {
+        if (m_mode == Mode.kClosedLoopPID) {
+            // getPositionError represents the delta/difference from the setpoint/goal velocity to current velocity
+            // The naming of getPositionError is kind of misleading for this usecase, as we aren't using the PID controller
+            // for position, but instead velocoty. There is a function called getVelocityError which will return how fast (or the rate :) ) the error is ranging
+            return m_pidController.getPositionError();
+        } else if (m_mode == Mode.kClosedLoopLQR) {
             return m_demand - m_encoder.getVelocity();
         }
 
@@ -141,7 +152,7 @@ public class LQRFlyWheel extends SubsystemBase {
      * @return precent error. A value of 10 means 10%
      */
     public double getErrorPrecent(){
-        if (m_mode == Mode.kClosedLoopLQR) {
+        if (m_mode == Mode.kClosedLoopPID || m_mode == Mode.kClosedLoopLQR) {
             return (m_demand - m_encoder.getVelocity() / m_demand) * 100;
         }
 
@@ -173,6 +184,24 @@ public class LQRFlyWheel extends SubsystemBase {
             // Convert prevent output to voltages
             outputVoltage = m_demand*12.0;
             break;
+        case kClosedLoopPID:
+            //
+            // PID Control
+            //
+
+            // Calculate feedforward output voltage
+            outputVoltage = m_demand * FlyWheelConstants.kF; 
+
+            // Update the PID controller, and its output to the feedforward voltage 
+            outputVoltage += m_pidController.calculate(getVelocity());
+
+            // Clamp output voltage to -10 to 10 volts
+            outputVoltage = MathUtil.clamp(outputVoltage, -10, 10);
+
+            // Send the command to the motor
+            m_leader.setVoltage(outputVoltage);
+
+            break;
         case kClosedLoopLQR:
             //
             // LQR StateSpace Control
@@ -200,6 +229,7 @@ public class LQRFlyWheel extends SubsystemBase {
             break;
         case kStopped:
         default:
+            // If we are stopped, or don't know what mode we are in stop the motor. 
             outputVoltage = 0.0;
         }
 
@@ -242,15 +272,33 @@ public class LQRFlyWheel extends SubsystemBase {
         );
     }
 
-    public void setClosedLoop(double goalRPM) {
+    public void setClosedLoopPID(double goalRPM) {
+        m_mode = Mode.kClosedLoopPID;
+        m_demand = goalRPM;
+    }
+
+    public Command setClosedLoopPIDCommand(double goalRPM) {
+        return Commands.runEnd(
+            // While this command is running set the flywheel to spin at the given goal RPm 
+            ()-> this.setClosedLoopPID(goalRPM), 
+
+            // Stop the flywheel motor, when the command ends (button is no longer pressed, or some other comamnd wants this subsystem)
+            this::stop,
+
+            // This command required this (the flywheel) subsystem
+            this
+        );
+    }
+
+    public void setClosedLoopLQR(double goalRPM) {
         m_mode = Mode.kClosedLoopLQR;
         m_demand = goalRPM;
     }
 
-    public Command setClosedLoopCommand(double goalRPM) {
+    public Command setClosedLoopLQRCommand(double goalRPM) {
         return Commands.runEnd(
             // While this command is running set the flywheel to spin at the given goal RPm 
-            ()-> this.setClosedLoop(goalRPM), 
+            ()-> this.setClosedLoopLQR(goalRPM), 
 
             // Stop the flywheel motor, when the command ends (button is no longer pressed, or some other comamnd wants this subsystem)
             this::stop,
